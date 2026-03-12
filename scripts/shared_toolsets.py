@@ -20,6 +20,8 @@
 
 import random
 import string
+import tempfile
+from collections import defaultdict
 from pathlib import Path
 
 import nuke
@@ -99,18 +101,19 @@ class CreateToolsetsPanel(nukescripts.PythonPanel):
         self.addKnob(self.infoText)
 
         if rename:
-            toolSetPath = fullFilePath.replace(SHARED_TOOLSET_PATH + "/", "")
-            toolSetPath = toolSetPath.replace(".nk", "")
+            toolSetPath = str(
+                Path(fullFilePath).relative_to(SHARED_TOOLSET_PATH).with_suffix("")
+            )
             self.menuPath.setValue(toolSetPath)
 
     # COMMENT:  BUILD A LIST Of PRE_CREATED FOLDER LOCATIONS
-    def buildFolderList(self, fullPath, menuPath):
-        fullPath = Path(fullPath)
-        filecontents = sorted((item.name for item in fullPath.iterdir()), key=str.lower)
-        for group in filecontents:
-            if (fullPath / group).is_dir():
-                self.userFolders.append(menuPath + group)
-                self.buildFolderList(fullPath / group, menuPath + group + "/")
+    def buildFolderList(self, rootFolder):
+        rootPath = Path(rootFolder)
+        self.userFolders += sorted(
+            subFolder.relative_to(rootPath).as_posix()
+            for subFolder in rootPath.rglob("*")
+            if subFolder.is_dir()
+        )
 
     def createPreset(self):
         if self.renameCreateSharedToolset(str(self.menuPath.value()), False):
@@ -124,34 +127,28 @@ class CreateToolsetsPanel(nukescripts.PythonPanel):
     def renameCreateSharedToolset(self, name, rename):
         ret = False
 
-        nameList = name.split("/")
-        fileName = nameList[-1]
-
-        del nameList[-1]
-        dirs = "/".join(nameList)
-
-        fullPath = Path(SHARED_TOOLSET_PATH) / dirs
+        destFilePath = (
+            Path(SHARED_TOOLSET_PATH, name).with_suffix(".nk").expanduser().resolve()
+        )
 
         try:
-            if not fullPath.is_dir():
-                fullPath.mkdir(parents=True, exist_ok=True)
+            destFilePath.parent.mkdir(parents=True, exist_ok=True)
+            srcFilePath = Path(self.fullFilePath).expanduser().resolve()
 
-            filePath = fullPath / (fileName + ".nk")
-
-            if not filePath.exists():
+            if not destFilePath.exists():
                 if self.rename:
-                    Path(self.fullFilePath).rename(filePath)
+                    srcFilePath.rename(destFilePath)
                 else:
                     # create way
-                    nuke.nodeCopy(str(filePath))
+                    nuke.nodeCopy(str(destFilePath))
 
-            elif nuke.ask("Overwrite existing \n %s?" % filePath):
+            elif nuke.ask("Overwrite existing \n %s?" % destFilePath):
                 if self.rename:
-                    filePath.unlink()
-                    Path(self.fullFilePath).rename(filePath)
+                    destFilePath.unlink()
+                    srcFilePath.rename(destFilePath)
                 else:
                     # create way
-                    nuke.nodeCopy(filePath)
+                    nuke.nodeCopy(str(destFilePath))
 
             ret = True
         except Exception:
@@ -161,13 +158,13 @@ class CreateToolsetsPanel(nukescripts.PythonPanel):
     def getPresetPath(self):
 
         # COMMENT: Added a bit of usability. Let's preserve a toolset's name
-        tempListToolsetName = self.menuPath.value().split("/")
-        tempToolsetName = tempListToolsetName[-1]
-
-        if str(self.menuItemChoice.value()) == "root":
-            self.menuPath.setValue("" + tempToolsetName)
-        else:
-            self.menuPath.setValue(self.menuItemChoice.value() + "/" + tempToolsetName)
+        tempToolsetName = Path(self.menuPath.value()).name
+        menuItemValue = str(self.menuItemChoice.value())
+        self.menuPath.setValue(
+            tempToolsetName
+            if menuItemValue == "root"
+            else f"{menuItemValue}/{tempToolsetName}"
+        )
 
     def knobChanged(self, knob):
         if knob == self.okButton:
@@ -203,8 +200,9 @@ def addToolsetsPanel():
 
 
 def deleteToolset(rootPath, fileName):
-    if nuke.ask("Are you sure you want to delete ToolSet %s?" % fileName):
-        Path(fileName).unlink()
+    fullPath = Path(fileName).expanduser().resolve()
+    if nuke.ask("Are you sure you want to delete ToolSet %s?" % fullPath):
+        fullPath.unlink()
         # COMMENT: if this was the last file in this directory, the folder will need to be deleted.
         # Walk the directory tree from the root and recursively delete empty directories
         checkForEmptyToolsetDirectories(rootPath)
@@ -213,18 +211,21 @@ def deleteToolset(rootPath, fileName):
 
 
 def checkForEmptyToolsetDirectories(currPath):
-    removed = True
-    currPath = Path(currPath)
-    while removed:
-        removed = False
-        for root in currPath.rglob("*"):
-            if root.is_dir():
-                try:
-                    if not any(root.iterdir()) and root != Path(SHARED_TOOLSET_PATH):
-                        root.rmdir()
-                        removed = True
-                except OSError:
-                    pass
+    root = Path(currPath)
+    toolset_folder = Path(SHARED_TOOLSET_PATH)
+
+    # Collect all folders by their depth in the directory tree
+    depthFolders = defaultdict(list)
+    for subFolder in root.rglob("*"):
+        if subFolder.is_dir() and subFolder != toolset_folder:
+            depth = len(subFolder.relative_to(root).parts)
+            depthFolders[depth].append(subFolder)
+
+    # Remove empty folders starting from the deepest level
+    for depth, folders in sorted(depthFolders.items(), reverse=True):
+        for subFolder in folders:
+            if not any(subFolder.iterdir()):
+                subFolder.rmdir()
 
 
 def refreshToolsetsMenu():
@@ -236,40 +237,44 @@ def refreshToolsetsMenu():
 
 
 def createToolsetsMenu(toolbar):
-    m = toolbar.addMenu(name="SharedToolSets", icon="SharedToolSets.png")
-    m.addCommand(
+    menu = toolbar.addMenu(name="SharedToolSets", icon="SharedToolSets.png")
+    menu.addCommand(
         "Create",
         "shared_toolsets.addToolsetsPanel()",
         "",
         icon="SharedToolSets_Create.png",
     )
-    m.addCommand("-", "", "")
-    if populateToolsetsMenu(m, False):
-        m.addCommand("-", "", "")
-        n = m.addMenu("Modify", "SharedToolSets_Modify.png")
-        populateToolsetsMenu(n, True)
-    m.addCommand(
+    menu.addCommand("-", "", "")
+    if populateToolsetsMenu(menu, False):
+        menu.addCommand("-", "", "")
+        subMenu = menu.addMenu("Modify", "SharedToolSets_Modify.png")
+        populateToolsetsMenu(subMenu, True)
+    menu.addCommand(
         "Refresh",
         "shared_toolsets.refreshToolsetsMenu()",
         icon="SharedToolSets_Refresh.png",
     )
 
 
-def traversePluginPaths(m, delete, allToolsetsList, isLocal):
-    ret = False
-    fullPath = SHARED_TOOLSET_PATH
-    if createToolsetMenuItems(m, fullPath, fullPath, delete, allToolsetsList, isLocal):
-        ret = True
-    return ret
+def traversePluginPaths(
+    menu,
+    delete: bool,
+    allToolsetsList: list,
+    isLocal: bool,
+) -> bool:
+    return createToolsetMenuItems(
+        menu,
+        SHARED_TOOLSET_PATH,
+        Path(SHARED_TOOLSET_PATH),
+        delete,
+        allToolsetsList,
+        isLocal,
+    )
 
 
-def populateToolsetsMenu(m, delete):
-    ret = False
-    allToolsetsList = []
+def populateToolsetsMenu(menu, delete: bool):
     # COMMENT: now do shared toolsets like the local .nuke
-    if traversePluginPaths(m, delete, allToolsetsList, True):
-        ret = True
-    return ret
+    return traversePluginPaths(menu, delete, [], True)
 
 
 def randomStringDigits(stringLength=6):
@@ -285,13 +290,14 @@ def toolsetLoader(fullFileName):
         # SAVING TEMPORAL TOOLSET | instead of
         # QApplication.clipboard().setText(data)
         # nuke.nodePaste("%clipboard%") is craching with big files BUG
-        randomPostfix = randomStringDigits(10)
-        randomName = Path(SHARED_TOOLSET_PATH) / ("temp_toolset_%s.nk" % randomPostfix)
-        saveTempToolSet = open(randomName, "w+")
-        saveTempToolSet.write(data)
-        saveTempToolSet.close()
-        nuke.loadToolset(str(randomName))
-        randomName.unlink()
+        tempFileContext = tempfile.NamedTemporaryFile(
+            suffix=".nk",
+            dir=SHARED_TOOLSET_PATH,
+            prefix="temp_toolset_",
+        )
+        with tempFileContext as tempFile:
+            Path(tempFile.name).write_text(data)
+            nuke.loadToolset(tempFile.name)
     else:
         nuke.loadToolset(fullFileName)
     return True
@@ -310,99 +316,98 @@ def fileFilter(fileName, filterFunc):
     return modifiedContent
 
 
+def validDir(newPath: Path) -> bool:
+    """Whether to not ignore this directory when building the menu."""
+    posixNewPath = newPath.as_posix()
+    return newPath.is_dir() and not (
+        ".svn" in newPath.parts
+        or any(
+            Path(excludePath).as_posix() in posixNewPath
+            for excludePath in nuke.getToolsetExcludePaths()
+        )
+    )
+
+
 # COMMENT: Main function, construct menuName
-def createToolsetMenuItems(m, rootPath, fullPath, delete, allToolsetsList, isLocal):
-    # TODO: CLEAN THIS FUNCTION
+def createToolsetMenuItems(
+    menu,
+    rootPath: str,
+    folderPath: Path,
+    delete: bool,
+    allToolsetsList: list,
+    isLocal: bool,
+):
+    success = False
 
-    fullPath = Path(fullPath)
-    filecontents = sorted([item.name for item in fullPath.iterdir()], key=str.lower)
-    excludePaths = nuke.getToolsetExcludePaths()
-    # COMMENT: First list all directories
-    retval = False
-    if filecontents != []:
-        for group in filecontents:
-            newPath = fullPath / group
-            ignore = False
-            if ".svn" in str(newPath):
-                ignore = True
-            else:
-                for i in excludePaths:
-                    i = i.replace("\\", "/")
-                    if i in str(newPath):
-                        ignore = True
-                        break
-            if newPath.is_dir() and not ignore:
-                menuName = group
-                if isLocal and (menuName in allToolsetsList):
-                    menuName = "[user] " + menuName
-                elif not isLocal:
-                    allToolsetsList.append(menuName)
-                n = m.addMenu(menuName)
-                retval = createToolsetMenuItems(
-                    n,
-                    rootPath,
-                    fullPath / group,
-                    delete,
-                    allToolsetsList,
-                    isLocal,
-                )
-                # COMMENT: if we are deleting, and the sub directory is now empty, delete the directory also
-                if delete and not any(fullPath.iterdir()):
-                    fullPath.rmdir()
-        # Now list individual files
-        for group in filecontents:
-            fullFileName = fullPath / group
-            if not fullFileName.is_dir():
-                # COMMENT: delete file with an extention ".nk~" created by edit.
-                if ".nk~" in group:
-                    fullFileName.unlink()
+    for subPath in sorted(folderPath.iterdir(), key=lambda p: p.name.lower()):
+        if validDir(subPath):
+            menuName = subPath.name
+            if not isLocal:
+                allToolsetsList.append(menuName)
+            elif menuName in allToolsetsList:
+                menuName = f"[user] {menuName}"
 
-                extPos = group.find(".nk")
-                if extPos != -1 and extPos == len(group) - 3:
-                    group = group.replace(".nk", "")
-                    if delete:
-                        subM = m.addMenu(group)
-                        subM.addCommand(
-                            "Edit", 'nuke.scriptOpen("%s")' % str(fullFileName), ""
-                        )
-                        subM.addCommand(
-                            "Rename",
-                            'shared_toolsets.renameToolset("%s")' % str(fullFileName),
-                            "",
-                        )
-                        subM.addCommand("-", "", "")
-                        subM.addCommand(
+            subMenu = menu.addMenu(menuName)
+            success = createToolsetMenuItems(
+                subMenu,
+                rootPath,
+                subPath,
+                delete,
+                allToolsetsList,
+                isLocal,
+            )
+
+        elif not subPath.is_dir():
+            # COMMENT: delete file with an extension ".nk~" created by edit.
+            if subPath.suffix.endswith(".nk~"):
+                subPath.unlink()
+            elif subPath.suffix.endswith(".nk"):
+                label = subPath.stem
+                if delete:
+                    subMenu = menu.addMenu(label)
+                    labelCommands = [
+                        ("Edit", f'nuke.scriptOpen("{subPath}")'),
+                        ("Rename", f'shared_toolsets.renameToolset("{subPath}")'),
+                        ("-", ""),
+                        (
                             "Delete",
-                            'shared_toolsets.deleteToolset("%s", "%s")'
-                            % (rootPath, str(fullFileName)),
-                            "",
-                        )
-                        retval = True
-                    else:
-                        # COMMENT: get the filename below toolsets
-                        fullFileName_str = str(fullFileName)
-                        i = fullFileName_str.find("SharedToolSets/")
-                        if i != -1:
-                            subfilename = fullFileName_str[i:]
-                        else:
-                            # COMMENT: should never happen, but just in case ...
-                            subfilename = fullFileName_str
-                        if isLocal and (subfilename in allToolsetsList):
-                            # COMMENT: if we've already appended [user] to the menu name, don't need it on the filename
-                            if (i != -1) and subfilename[len("SharedToolSets/") :].find(
-                                "/"
-                            ) == -1:
-                                group = "[user] " + group
-                        elif not isLocal:
-                            allToolsetsList.append(subfilename)
+                            f'shared_toolsets.deleteToolset("{rootPath}", "{subPath}")',
+                        ),
+                    ]
+                    for label, command in labelCommands:
+                        subMenu.addCommand(label, command)
+                    success = True
+                else:
+                    # COMMENT: get the filename below toolsets
+                    subfilename = str(subPath)
+                    subfilenameHasFolders = False
+                    for sharedToolSetsFolder in subPath.parents:
+                        if (
+                            sharedToolSetsFolder.is_dir()
+                            and sharedToolSetsFolder.name == "SharedToolSets"
+                        ):
+                            root = sharedToolSetsFolder.parent
+                            relPathToRoot = subPath.relative_to(root)
+                            subfilename = str(relPathToRoot)
+                            subfilenameHasFolders = len(relPathToRoot.parts) > 1
+                            break
 
-                        # TODO: get ref module name, now it is static linking
-                        # current_module = sys.modules[__name__]
-                        # print(current_module)
-                        m.addCommand(
-                            group,
-                            'shared_toolsets.toolsetLoader("%s")' % fullFileName_str,
-                            "",
-                        )
-                        retval = True
-    return retval
+                    if not isLocal:
+                        allToolsetsList.append(subfilename)
+                    elif (subfilename in allToolsetsList) and subfilenameHasFolders:
+                        # COMMENT: if we've already appended [user] to the menu name, don't need it on the filename
+                        label = f"[user] {label}"
+
+                    # TODO: get ref module name, now it is static linking
+                    # current_module = sys.modules[__name__]
+                    # print(current_module)
+                    menu.addCommand(
+                        label, f'shared_toolsets.toolsetLoader("{subPath!s}")'
+                    )
+                    success = True
+
+    # COMMENT: if we are deleting, and the sub directory is now empty, delete the directory also
+    if delete and not any(folderPath.iterdir()):
+        folderPath.rmdir()
+
+    return success
