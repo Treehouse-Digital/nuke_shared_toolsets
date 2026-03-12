@@ -18,8 +18,6 @@
 # 1.6 - fixed a bug that caused Nuke crashing when loading of "big" toolsets
 # 1.7 - added a support of nuke13.x, python 3
 
-import random
-import string
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -277,12 +275,6 @@ def populateToolsetsMenu(menu, delete: bool):
     return traversePluginPaths(menu, delete, [], True)
 
 
-def randomStringDigits(stringLength=6):
-    """Generate a random string of letters and digits"""
-    lettersAndDigits = string.ascii_letters + string.digits
-    return "".join(random.choice(lettersAndDigits) for i in range(stringLength))
-
-
 # COMMENT: warper around loadToolset
 def toolsetLoader(fullFileName):
     if FILE_FILTER is not None:
@@ -316,11 +308,11 @@ def fileFilter(fileName, filterFunc):
     return modifiedContent
 
 
-def validDir(newPath: Path) -> bool:
-    """Whether to not ignore this directory when building the menu."""
-    posixNewPath = newPath.as_posix()
-    return newPath.is_dir() and not (
-        ".svn" in newPath.parts
+def validDir(folder: Path) -> bool:
+    """Whether to use this directory when building the menu."""
+    posixNewPath = folder.as_posix()
+    return folder.is_dir() and not (
+        ".svn" in folder.parts
         or any(
             Path(excludePath).as_posix() in posixNewPath
             for excludePath in nuke.getToolsetExcludePaths()
