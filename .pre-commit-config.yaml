@@ -1,0 +1,18 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-ast
+        language_version: python3
+      - id: check-yaml
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.5
+    hooks:
+      - id: ruff-check
+      - id: ruff-format

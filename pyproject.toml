@@ -1,0 +1,10 @@
+# Used for centralised Python tooling settings
+# i.e. avoids separate tox.ini, coverage.ini, ruff.toml, .coveragerc
+# unless they're used to bake expanded/non-env-var configs
+[tool.ruff]
+target-version = "py39"  # Nuke 14.1 uses Python 3.9
+
+[tool.ruff.lint.extend-per-file-ignores]
+"**/*.py" = [
+    "INP001", # Ignore missing __init__.py files
+]
