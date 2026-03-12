@@ -1,4 +1,4 @@
 import nuke
 
-nuke.pluginAddPath('./scripts')
-nuke.pluginAddPath('./icons')
+nuke.pluginAddPath("./scripts")
+nuke.pluginAddPath("./icons")
