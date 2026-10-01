@@ -6,17 +6,20 @@ import contextlib
 import os
 import platform
 import re
-from collections.abc import Generator
 from logging import INFO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import nuke
 
-from .logger import LOG, timed
+from .logger import LOG, Timed
 
-__all__ = ("clean_file", "DiskPath", "nice_mb")
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+__all__ = ("DiskPath", "clean_file", "nice_mb")
 
 
 SYSTEM = platform.system()
@@ -33,16 +36,12 @@ def nice_mb(file_path: Path) -> str:
     mega = 10**6  # i.e. mega in megabytes
     file_size_mb = file_path.stat().st_size / mega
 
-    if file_size_mb >= 100:
-        precision = 0
-    elif file_size_mb >= 10:
-        precision = 1
-    elif file_size_mb >= 1:
-        precision = 2
-    else:
-        precision = 3
-
-    return f"{file_size_mb:.{precision}f} MB"
+    decimals = next(
+        _decimals
+        for _decimals, limit in enumerate([100, 10, 1, None])
+        if limit is None or file_size_mb >= limit
+    )
+    return f"{file_size_mb:.{decimals}f} MB"
 
 
 def clean_file(path: Path) -> None:
@@ -95,9 +94,10 @@ class DiskPath:
         self._toolsets = self._calculate_toolsets_path()
         self._localize_re = self._calculate_localize_re()
 
-    def _calculate_system_prefix(self):
+    def _calculate_system_prefix(self) -> Path:
         if SYSTEM not in self._system_prefixes:
-            raise ValueError(f"No prefix defined for current system {SYSTEM!r}")
+            msg = f"No prefix defined for current system {SYSTEM!r}"
+            raise ValueError(msg)
         return self._system_prefixes[SYSTEM]
 
     def _calculate_toolsets_path(self) -> None:
@@ -157,7 +157,7 @@ class DiskPath:
         The created dictionary maps menu item paths to their respective ``.nk`` full
         file paths on disk.
         """
-        with timed("discovering .nk files on disk"):
+        with Timed("discovering .nk files on disk"):
             nk_paths = sorted(
                 path for path in self.toolsets.rglob("*.nk") if path.is_file()
             )
@@ -166,7 +166,7 @@ class DiskPath:
             for path in nk_paths
         }
 
-    @timed("cleaning temporary .nk~ files and resulting empty folders")
+    @Timed("cleaning temporary .nk~ files and resulting empty folders")
     def clean_temp_nk_files(self) -> None:
         """Clean up temporary .nk~ files and any resulting empty folders."""
         for path in self.toolsets.rglob("*.nk~"):
@@ -198,7 +198,7 @@ class DiskPath:
             total = total_bytes / 100  # Nuke uses 0 for start, 100 for fully done
             read_bytes = 0
             with (
-                timed(f"localizing {nice_mb(nk_path)} from {nk_path}", level=INFO),
+                Timed(f"localizing {nice_mb(nk_path)} from {nk_path}", level=INFO),
                 nk_path.open(mode="rt", encoding="UTF-8") as nk_file,
                 localized_path.open(mode="wt", encoding="UTF-8") as localized_file,
             ):

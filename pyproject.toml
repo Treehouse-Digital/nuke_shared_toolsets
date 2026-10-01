@@ -2,9 +2,45 @@
 # i.e. avoids separate tox.ini, coverage.ini, ruff.toml, .coveragerc
 # unless they're used to bake expanded/non-env-var configs
 [tool.ruff]
-target-version = "py39"  # Nuke 14.1 uses Python 3.9
+target-version = "py39"  # Nuke 14 uses Python 3.9
 
-[tool.ruff.lint.extend-per-file-ignores]
-"**/*.py" = [
-    "INP001", # Ignore missing __init__.py files
+[tool.ruff.lint]
+select = ["ALL"]  # Check everything, then ignore as necessary:
+ignore = [
+    # Stylistic ones we can't be bothered with.
+    "G004", # f-string in logging call.
+
+    # Likely false-positives/hard to prove:
+    "S603",  # Use GitHub PR to manually check security of subprocess calls.
+    "S607",  # Ignore error about executables not using absolute paths.
+    "EXE003",# Allow shell-bang Nuke/Maya/etc to execute Python scripts.
+
+    # Conflicts which ruff formatter already takes care of.
+    "COM812", # Absence of trailing commas that helps reduce diff size
+    "COM819", # Presence of prohibited/non-essential trailing commas.
+
+    # Mutually exclusive docstring formatting/convention checks:
+    # - Checks for docstring summary lines that are not positioned on the ...
+    "D212", # ... first physical line of the docstring.
+    "D213", # ... second physical line of the docstring.
+    # - Checks for docstrings on class definitions that are ...
+    "D203", # ... not preceded by a blank line.
+    "D211", # ... preceded by a blank line.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**/*.py" = [
+    "INP001", # Ignore missing __init__.py files for Tests.
+    "ANN201", # Ignore missing missing return type-hints for Tests.
+    "PLC0415", # Ignore imports inside tests.
+    "ANN001", # Don't care about type-hints for test mocked args.
+    "SLF001", # Don't care if we're accessing private members in tests.
+    "PLR2004", # Don't care about magic values in tests.
+    # https://github.com/astral-sh/ruff/issues/4368#issue-1705468153
+    "S101", # asserts allowed in tests...
+    "ARG", # Unused function args -> fixtures nevertheless are functionally relevant...
+    "FBT", # Don't care about booleans as positional arguments in tests, e.g. via @pytest.mark.parametrize()
+]
+"init.py" = [
+    "INP001", # Ignore missing __init__.py files for init.py at the root of the package.
 ]

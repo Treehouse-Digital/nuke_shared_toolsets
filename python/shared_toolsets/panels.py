@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
 from functools import cache
 from pathlib import Path
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import nuke
 import nukescripts
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 __all__ = (
-    "folder_path_options",
-    "sanitize_new_path",
     "BasePanel",
     "CreatePanel",
     "RenamePanel",
+    "folder_path_options",
+    "sanitize_new_path",
 )
 
 
@@ -56,6 +59,8 @@ def sanitize_new_path(path: str) -> str:
 
 
 class BasePanel(nukescripts.PythonPanel):
+    """Base panel class for shared toolsets create/rename panels."""
+
     ROOT: str = "<root>"
     """Value of representing the SharedToolSets root menu."""
 
@@ -87,7 +92,7 @@ class BasePanel(nukescripts.PythonPanel):
         self._add_knobs()
         self._configure_knobs()
 
-    def knobChangedCallback(self, knob: nuke.Knob) -> None:
+    def knobChangedCallback(self, knob: nuke.Knob) -> None:  # noqa: N802  # Inherited method naming
         """Extend to update the preset path when the parent folder choice changes."""
         if knob is self["parentMenu"]:
             self["newPath"].setValue(self._new_path_for_current_folder())
@@ -106,12 +111,13 @@ class BasePanel(nukescripts.PythonPanel):
         """Current new path value set in the GUI."""
         return self["newPath"].value()
 
-    def __getitem__(self, key: str) -> nuke.Knob:
-        if key not in (knobs := self.knobs()):
+    def __getitem__(self, name: str) -> nuke.Knob:
+        """Retrieve a knob by its name, raising KeyError if not found."""
+        if name not in (knobs := self.knobs()):
             available = ",".join(map(repr, sorted(knobs)))
-            msg = f"Knob {key!r} not found, only these are available: {available}"
+            msg = f"Knob {name!r} not found, only these are available: {available}"
             raise KeyError(msg)
-        return knobs[key]
+        return knobs[name]
 
     def _add_knobs(self) -> None:
         """Add knobs based off initial values from the KNOBS mapping."""
@@ -147,7 +153,15 @@ class BasePanel(nukescripts.PythonPanel):
 
 
 class RenamePanel(BasePanel):
-    def __init__(self, old_path: str, roster, title="Rename ToolSet"):
+    """Panel for renaming an existing toolset."""
+
+    def __init__(
+        self,
+        old_path: str,
+        roster: dict[str, Path],
+        title: str = "Rename ToolSet",
+    ) -> None:
+        """Extend to store the path to rename before initializing the base panel."""
         self._old_path = str(old_path)
         super().__init__(roster, title=title)
 
@@ -158,7 +172,10 @@ class RenamePanel(BasePanel):
 
 
 class CreatePanel(BasePanel):
-    def __init__(self, roster, title="Create ToolSet"):
+    """Panel for creating a new toolset."""
+
+    def __init__(self, roster: dict[str, Path], title: str = "Create ToolSet") -> None:
+        """Extend to initialise with "Create ToolSet" as the default title."""
         super().__init__(roster, title=title)
 
     def _configure_knobs(self) -> None:

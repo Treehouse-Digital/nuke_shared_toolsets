@@ -1,12 +1,17 @@
+"""Shared toolsets Python sub-package."""
+
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .logger import LOG
 from .menus import SharedToolsetGui
 from .paths import DiskPath
 
-__all__ = ("SharedToolsetGui", "LOG", "DiskPath", "install", "latest")
+if TYPE_CHECKING:
+    from pathlib import Path
+
+__all__ = ("LOG", "DiskPath", "SharedToolsetGui", "install", "instance")
 
 __INSTANCE: SharedToolsetGui | None = None
 
@@ -24,7 +29,7 @@ def install(
     supported. The kwarg's name should be one of the known return values of
     `.platform.system` from Python's standard library.
     """
-    global __INSTANCE
+    global __INSTANCE  # noqa: PLW0603  # We're hiding the global instance variable
 
     disk_path = DiskPath(toolsets_sub_path, **system_prefixes)
     __INSTANCE = SharedToolsetGui(disk_path)
@@ -32,6 +37,6 @@ def install(
     return __INSTANCE
 
 
-def latest() -> SharedToolsetGui | None:
+def instance() -> SharedToolsetGui | None:
     """Get latest installed instance if available, or None otherwise."""
     return __INSTANCE
