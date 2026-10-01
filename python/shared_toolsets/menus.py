@@ -128,11 +128,21 @@ class SharedToolsetGui:
         with contextlib.ExitStack() as stack:
             nk_path = original_nk_path
             if self._localize:
+                task = nuke.ProgressTask(f"Localizing {nk_path.stem}")
+
+                def task_callback(percentage: float) -> None:
+                    """Nuke uses 0 for start, 100 for fully done."""
+                    task.setProgress(int(percentage * 100))
+
                 msg = f"localizing {suffix(original_nk_path)}"
                 with Timed(msg, level=logging.INFO):
                     nk_path = stack.enter_context(
-                        self._disk_path.temp_localized(original_nk_path)
+                        self._disk_path.temp_localized(
+                            original_nk_path, percent_callback=task_callback
+                        )
                     )
+
+                del task  # Ensure GUI is closed!
 
             with Timed(f"loading {suffix(nk_path)}", level=logging.INFO):
                 nuke.loadToolset(str(nk_path))

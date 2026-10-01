@@ -10,9 +10,7 @@ from logging import INFO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from types import MappingProxyType
-from typing import TYPE_CHECKING
-
-import nuke
+from typing import TYPE_CHECKING, Callable
 
 from .logger import LOG, Timed
 
@@ -174,7 +172,9 @@ class DiskPath:
                 clean_file(path)
 
     @contextlib.contextmanager
-    def temp_localized(self, nk_path: Path) -> Generator[Path, None, None]:
+    def temp_localized(
+        self, nk_path: Path, percent_callback: Callable[[float], None] | None = None
+    ) -> Generator[Path, None, None]:
         """Create a temporary a copy of the .nk file with paths localized.
 
         This is done line by line in case the .nk file is large i.e. gigabytes in size
@@ -188,24 +188,30 @@ class DiskPath:
             msg = f"File {nk_path} is empty i.e. 0 bytes in size"
             raise OSError(msg)
 
+        def dud_callback(_: float) -> None:
+            """Don't do anything to given progress percentage."""
+
+        percent_callback = percent_callback or dud_callback
+
         with NamedTemporaryFile(
             prefix="localize_shared_toolset_",
             suffix=".nk",
             dir=os.getenv("NUKE_TEMP_DIR"),
         ) as temp:
             localized_path = Path(temp.name)
-            task = nuke.ProgressTask(f"Localizing {nk_path.stem}")
-            total = total_bytes / 100  # Nuke uses 0 for start, 100 for fully done
             read_bytes = 0
-            with (
-                Timed(f"localizing {nice_mb(nk_path)} from {nk_path}", level=INFO),
-                nk_path.open(mode="rt", encoding="UTF-8") as nk_file,
-                localized_path.open(mode="wt", encoding="UTF-8") as localized_file,
-            ):
+
+            # Using ExitStack, can be changed to parenthesised with-statements >= Py3.10
+            timed_msg = f"localizing {nice_mb(nk_path)} from {nk_path}"
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(Timed(timed_msg, level=INFO))
+                nk_file = stack.enter_context(nk_path.open(mode="rt", encoding="UTF-8"))
+                localized_file = stack.enter_context(
+                    localized_path.open(mode="wt", encoding="UTF-8")
+                )
                 for line in nk_file:
                     read_bytes += len(line.encode("UTF-8"))
-                    task.setProgress(int(read_bytes / total))
+                    percent_callback(read_bytes / total_bytes)
                     localized_file.write(self.localize_any_posix(line))
 
-            del task  # Ensure GUI is closed!
             yield localized_path
