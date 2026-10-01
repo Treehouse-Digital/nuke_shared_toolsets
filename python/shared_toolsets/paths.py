@@ -10,12 +10,12 @@ from logging import INFO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from .logger import LOG, Timed
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
 __all__ = ("DiskPath", "clean_file", "nice_mb")
 
