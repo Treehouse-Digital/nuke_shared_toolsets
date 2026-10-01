@@ -6,8 +6,9 @@ import contextlib
 import os
 import platform
 import re
+from collections import OrderedDict
 from logging import INFO
-from pathlib import Path
+from pathlib import Path, PosixPath, WindowsPath
 from tempfile import NamedTemporaryFile
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -27,7 +28,7 @@ SYSTEM = platform.system()
 def nice_mb(file_path: Path) -> str:
     """Nice formatted string for the size of the given file in megabytes."""
     if not file_path.is_file():
-        error = OSError(f"{file_path} is not a valid file.")
+        error = FileNotFoundError(f"{file_path} is not a valid file.")
         error.filename = file_path
         raise error
 
@@ -82,15 +83,25 @@ class DiskPath:
         """
         self._toolsets_sub_path = Path(toolsets_sub_path)
         self._system_prefixes = MappingProxyType(
-            {
-                str(system): prefix_path.expanduser().resolve()
-                for system, prefix in system_prefixes.items()
-                if (prefix_path := Path(prefix)) != Path()
-            }
+            OrderedDict(self._iter_resolved_prefixes(system_prefixes))
         )
         self._system_prefix = self._calculate_system_prefix()
         self._toolsets = self._calculate_toolsets_path()
         self._localize_re = self._calculate_localize_re()
+
+    def _iter_resolved_prefixes(
+        self, system_prefixes: str | Path
+    ) -> Generator[tuple[str, Path], None, None]:
+        blank_path = Path()
+        for system, prefix in system_prefixes.items():
+            if system == SYSTEM:
+                cls = Path
+            elif system == "Windows":
+                cls = WindowsPath
+            else:
+                cls = PosixPath
+            if (prefix_path := cls(prefix)) != blank_path:
+                yield str(system), prefix_path.expanduser()
 
     def _calculate_system_prefix(self) -> Path:
         if SYSTEM not in self._system_prefixes:
@@ -98,10 +109,10 @@ class DiskPath:
             raise ValueError(msg)
         return self._system_prefixes[SYSTEM]
 
-    def _calculate_toolsets_path(self) -> None:
+    def _calculate_toolsets_path(self) -> Path:
         return (self._system_prefix / self._toolsets_sub_path).resolve(strict=True)
 
-    def _calculate_localize_re(self) -> None:
+    def _calculate_localize_re(self) -> str:
         localize_re = "|".join(
             re.escape(prefix.as_posix())
             for system_name, prefix in self._system_prefixes.items()
