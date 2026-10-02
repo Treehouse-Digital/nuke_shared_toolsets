@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
-from functools import cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -20,6 +20,7 @@ __all__ = (
     "RenamePanel",
     "folder_path_options",
     "sanitize_new_path",
+    "validate_cmd_path",
 )
 
 
@@ -52,17 +53,45 @@ def folder_path_options(roster: Iterable[str], parent: str | None = None) -> lis
     return results
 
 
-@cache
+def validate_cmd_path(cmd_path: str) -> str:
+    """Validate a menu command path and normalize component whitespace."""
+    normalized = cmd_path.strip()
+    if not normalized:
+        msg = "Toolset menu path cannot be empty"
+        raise ValueError(msg)
+    if "\\" in normalized:
+        msg = "Use '/' separators in toolset menu paths"
+        raise ValueError(msg)
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+        msg = "Toolset menu path must be relative"
+        raise ValueError(msg)
+    if any(not character.isprintable() for character in normalized):
+        msg = "Toolset menu path cannot contain control characters"
+        raise ValueError(msg)
+    if any(character in '<>:"|?*' for character in normalized):
+        msg = 'Toolset menu path cannot contain <>:"|?*'
+        raise ValueError(msg)
+
+    parts = [part.strip() for part in normalized.split("/")]
+    if any(not part or part in {".", ".."} for part in parts):
+        msg = "Toolset menu path cannot contain empty, '.' or '..' components"
+        raise ValueError(msg)
+    if parts[-1].lower().endswith(".nk"):
+        msg = "Enter the menu name without the .nk extension"
+        raise ValueError(msg)
+    return "/".join(parts)
+
+
 def sanitize_new_path(path: str) -> str:
-    """Sanitize a new path by converting it to a POSIX path and stripping whitespace."""
-    return Path(path).as_posix().strip()
+    """Validate and normalize a menu command path."""
+    return validate_cmd_path(path)
 
 
 class BasePanel(nukescripts.PythonPanel):
     """Base panel class for shared toolsets create/rename panels."""
 
     ROOT: str = "<root>"
-    """Value of representing the SharedToolSets root menu."""
+    """Menu item for the SharedToolSets root menu."""
 
     KNOBS: MappingProxyType[str, tuple[type[nuke.Knob], tuple]] = MappingProxyType(
         {
@@ -94,11 +123,14 @@ class BasePanel(nukescripts.PythonPanel):
 
     def knobChangedCallback(self, knob: nuke.Knob) -> None:  # noqa: N802  # Inherited method naming
         """Extend to update the preset path when the parent folder choice changes."""
-        if knob is self["parentMenu"]:
+        if knob.name() == "parentMenu":
             self["newPath"].setValue(self._new_path_for_current_folder())
-        elif knob is self["newPath"]:
+        elif knob.name() == "newPath":
             current = self["newPath"].value()
-            sanitized = sanitize_new_path(current)
+            try:
+                sanitized = sanitize_new_path(current)
+            except ValueError:
+                return
             if current != sanitized:
                 self["newPath"].setValue(sanitized)
         else:
@@ -109,7 +141,7 @@ class BasePanel(nukescripts.PythonPanel):
     @property
     def new_path(self) -> str:
         """Current new path value set in the GUI."""
-        return self["newPath"].value()
+        return validate_cmd_path(self["newPath"].value())
 
     def __getitem__(self, name: str) -> nuke.Knob:
         """Retrieve a knob by its name, raising KeyError if not found."""
@@ -124,7 +156,7 @@ class BasePanel(nukescripts.PythonPanel):
         for knob_name, (knob_class, args) in self.KNOBS.items():
             self.addKnob(knob_class(knob_name, *args))
 
-        # Ensure showModelDialog ok/cancel uses our custom ok/cancel buttons
+        # Ensure showModalDialog uses the panel's custom buttons.
         self.okButton = self["ok"]
         self.cancelButton = self["cancel"]
 
@@ -149,7 +181,8 @@ class BasePanel(nukescripts.PythonPanel):
         current_name = Path(self["newPath"].value()).name
         chosen_folder_path: str = self["parentMenu"].value().replace(".../", "/")
         prefix = "" if chosen_folder_path == self.ROOT else f"{chosen_folder_path}/"
-        return sanitize_new_path(f"{prefix}{current_name}")
+        candidate = f"{prefix}{current_name}".rstrip("/")
+        return sanitize_new_path(candidate) if candidate else ""
 
 
 class RenamePanel(BasePanel):
@@ -158,7 +191,7 @@ class RenamePanel(BasePanel):
     def __init__(
         self,
         old_path: str,
-        roster: dict[str, Path],
+        roster: Iterable[str],
         title: str = "Rename ToolSet",
     ) -> None:
         """Extend to store the path to rename before initializing the base panel."""
@@ -174,7 +207,7 @@ class RenamePanel(BasePanel):
 class CreatePanel(BasePanel):
     """Panel for creating a new toolset."""
 
-    def __init__(self, roster: dict[str, Path], title: str = "Create ToolSet") -> None:
+    def __init__(self, roster: Iterable[str], title: str = "Create ToolSet") -> None:
         """Extend to initialise with "Create ToolSet" as the default title."""
         super().__init__(roster, title=title)
 

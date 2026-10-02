@@ -40,7 +40,29 @@ ignore = [
     "S101", # asserts allowed in tests...
     "ARG", # Unused function args -> fixtures nevertheless are functionally relevant...
     "FBT", # Don't care about booleans as positional arguments in tests, e.g. via @pytest.mark.parametrize()
+    "D1", # Test names describe the behavior; each test does not need a docstring.
 ]
 "init.py" = [
     "INP001", # Ignore missing __init__.py files for init.py at the root of the package.
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["python"]
+addopts = ["-ra", "--strict-markers"]
+markers = [
+    "windows_only: requires a real Windows host",
+    "posix_only: requires a real POSIX host",
+]
+
+[tool.coverage.run]
+source_pkgs = ["shared_toolsets"]
+branch = true
+
+[tool.coverage.report]
+include = ["*/shared_toolsets/logger.py", "*/shared_toolsets/paths.py"]
+show_missing = true
+skip_empty = true
+exclude_also = ["if TYPE_CHECKING:"]
+# Keep the whole-percent floor at the measured 94.19% line/branch coverage.
+fail_under = 94

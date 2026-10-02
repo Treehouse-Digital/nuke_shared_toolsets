@@ -17,12 +17,16 @@ Demo: https://vimeo.com/168542667
 
     nuke.pluginAddPath("/path/to/folder/with/SharedToolSets")
     ```
-Then for `menu.py`, if everyone is on Linux and the parent folder is just `/mnt`, add:
+
+4. In your Nuke `menu.py` file, configure the toolsets folder. For a Linux share mounted at `/mnt`:
 
 ```python
 import shared_toolsets
 shared_toolsets.install("folder/with/SharedToolSets", Linux="/mnt")
 ```
+
+The folder containing `init.py` is the toolsets root in this example. Place `.nk` toolsets there or in its subfolders; discovery is recursive.
+Use only the system names `Windows`, `Darwin`, and `Linux` for prefix keywords.
 
 If everyone is accessing the SharedToolset from different platforms, e.g.
 
@@ -42,9 +46,14 @@ shared_toolsets.install(
 )
 ```
 
------
+To enable package logs, configure Python logging before installing, for example with `logging.basicConfig(level=logging.INFO)`.
 
-If you have found this tool helpful, please consider supporting me with a donation. <br />
-This will help me maintain current tools and develop new ones. Thanks for your support!
+## Attribution
 
-[![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://paypal.me/vitmusatov)
+This project is based on Nuke's ToolSets. The original script credited Vitaly Musatov and included the notice: "Based on Nuke's ToolSets. Copyright (c) 2009 The Foundry Visionmongers Ltd. All Rights Reserved."
+
+> If you have found this tool helpful, please consider supporting me with a donation. <br />
+> This will help me maintain current tools and develop new ones. Thanks for your support!
+>
+> [![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://paypal.me/vitmusatov)
+>

@@ -6,37 +6,50 @@ import contextlib
 import logging
 from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import nuke
 
 from .logger import LOG, Timed
-from .panels import CreatePanel, RenamePanel
+from .panels import CreatePanel, RenamePanel, validate_cmd_path
 from .paths import DiskPath, clean_file, nice_mb
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 __all__ = ("SharedToolsetGui", "delete_from_menu")
 
 
+class _LoadCancelledError(Exception):
+    """Internal signal used to stop localization when Nuke cancels progress."""
+
+
+def _check_progress_cancelled(task: nuke.ProgressTask) -> None:
+    if task.isCancelled():
+        raise _LoadCancelledError
+
+
 def delete_from_menu(root_menu: nuke.Menu, sub_path: str) -> None:
-    """Remove a item from the given menu based on the sub path i.e. "Menu/SubMenu/Item".
+    """Remove an item from the given menu by its path, e.g. "Menu/SubMenu/Item".
 
     Nuke's documentation mentioned that `.nuke.Menu.removeItem` should be able to do
     this natively, but alas it doesn't (as recently as 14.1v8).
     """
-    if parts := sub_path.split("/"):
-        item_name = parts.pop()
-        sub_menu_parts = []
-        menu = root_menu
+    parts = sub_path.split("/")
+    item_name = parts.pop()
+    sub_menu_parts = []
+    menu = root_menu
 
-        for menu_name in parts:
-            sub_menu_parts.append(menu_name)
-            if submenu := menu.menu(menu_name):
-                menu = submenu
-            else:
-                msg = "Nothing to delete as submenu %r not found in menu path %r"
-                LOG.warning(msg, menu_name, "/".join(sub_menu_parts))
-                return
+    for menu_name in parts:
+        sub_menu_parts.append(menu_name)
+        if submenu := menu.menu(menu_name):
+            menu = submenu
+        else:
+            msg = "Nothing to delete as submenu %r not found in menu path %r"
+            LOG.warning(msg, menu_name, "/".join(sub_menu_parts))
+            return
 
-        menu.removeItem(item_name)
+    menu.removeItem(item_name)
 
 
 class SharedToolsetGui:
@@ -55,7 +68,7 @@ class SharedToolsetGui:
         more than 1 prefixes being handled in the disk path.
         """
         self._disk_path = disk_path
-        self._modify_menu = None
+        self._modify_menu: nuke.Menu | None = None
         self._menu_nk_roster: dict[str, Path] = {}
         if localize is None:
             localize = len(disk_path.prefixes) > 1
@@ -90,29 +103,51 @@ class SharedToolsetGui:
 
     def create(self, cmd_path: str) -> Path | None:
         """Create a new .nk file for the menu item/command path."""
-        LOG.debug(f"Creating {cmd_path = }")
-        if nk_path := self._overwrite_approved_nk_path(cmd_path):
+        cmd_path = self._validate_cmd_path(cmd_path)
+        nk_path = self._overwrite_approved_nk_path(cmd_path)
+        if nk_path is None:
+            return None
+
+        temporary_path = nk_path.with_name(nk_path.name + ".part")
+        try:
             with Timed(f"creating {nk_path}"):
                 nk_path.parent.mkdir(parents=True, exist_ok=True)
-                nuke.nodeCopy(str(nk_path))
-            LOG.info(f"Created new: {nk_path}")
-            self.refresh()
+                result = nuke.nodeCopy(str(temporary_path))
+                if result is False or not temporary_path.is_file():
+                    msg = f"Nuke did not create the toolset file {temporary_path}"
+                    raise OSError(msg)
+                temporary_path.replace(nk_path)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+
+        LOG.info(f"Created new: {nk_path}")
+        self.refresh()
         return nk_path
 
     def rename(self, old_cmd_path: str, new_cmd_path: str) -> Path | None:
         """Rename an existing menu item/command path to the new location."""
-        LOG.debug(f"Renaming {old_cmd_path = }")
-        LOG.debug(f"      to {new_cmd_path = }")
+        old_cmd_path = validate_cmd_path(old_cmd_path)
+        new_cmd_path = self._validate_cmd_path(new_cmd_path, ignore=old_cmd_path)
         old_nk_path = self._toolsets_root / f"{old_cmd_path}.nk"
-        LOG.debug(f"    from {old_nk_path = }")
+        if not old_nk_path.is_file():
+            msg = f"Source toolset no longer exists: {old_nk_path}"
+            raise FileNotFoundError(msg)
+        if old_cmd_path == new_cmd_path:
+            return old_nk_path
 
-        if new_nk_path := self._overwrite_approved_nk_path(new_cmd_path):
-            with Timed(f"renaming to {new_nk_path}"):
-                new_nk_path.parent.mkdir(parents=True, exist_ok=True)
-                old_nk_path.replace(new_nk_path)
-                LOG.info(f"Renamed to new: {new_nk_path}")
-            self.refresh()
+        new_nk_path = self._overwrite_approved_nk_path(new_cmd_path)
+        if new_nk_path is None:
+            return None
 
+        old_parent = old_nk_path.parent
+        with Timed(f"renaming {old_nk_path} to {new_nk_path}"):
+            new_nk_path.parent.mkdir(parents=True, exist_ok=True)
+            old_nk_path.replace(new_nk_path)
+            self._remove_empty_parents(old_parent)
+
+        LOG.info(f"Renamed to new: {new_nk_path}")
+        self.refresh()
         return new_nk_path
 
     def load(self, original_nk_path: Path) -> None:
@@ -125,43 +160,55 @@ class SharedToolsetGui:
         def suffix(file_path: Path) -> str:
             return f"{nice_mb(file_path)} from {file_path}"
 
-        with contextlib.ExitStack() as stack:
-            nk_path = original_nk_path
-            if self._localize:
-                task = nuke.ProgressTask(f"Localizing {nk_path.stem}")
+        task = None
+        try:
+            with contextlib.ExitStack() as stack:
+                nk_path = original_nk_path
+                if self._localize:
+                    task = nuke.ProgressTask(f"Localizing {nk_path.stem}")
 
-                def task_callback(percentage: float) -> None:
-                    """Nuke uses 0 for start, 100 for fully done."""
-                    task.setProgress(int(percentage * 100))
+                    def task_callback(percentage: float) -> None:
+                        _check_progress_cancelled(task)
+                        task.setProgress(int(percentage * 100))
 
-                msg = f"localizing {suffix(original_nk_path)}"
-                with Timed(msg, level=logging.INFO):
                     nk_path = stack.enter_context(
                         self._disk_path.temp_localized(
                             original_nk_path, percent_callback=task_callback
                         )
                     )
+                    _check_progress_cancelled(task)
 
-                del task  # Ensure GUI is closed!
-
-            with Timed(f"loading {suffix(nk_path)}", level=logging.INFO):
-                nuke.loadToolset(str(nk_path))
+                with Timed(f"loading {suffix(nk_path)}", level=logging.INFO):
+                    nuke.loadToolset(str(nk_path))
+        except _LoadCancelledError:
+            LOG.info("Loading cancelled for %s", original_nk_path)
+        except (OSError, ValueError) as error:
+            LOG.exception("Could not load toolset %s", original_nk_path)
+            nuke.message(f"Could not load toolset {original_nk_path}: {error}")
+            self.refresh()
+        finally:
+            if task is not None:
+                del task
 
     def delete(self, cmd_path: str) -> None:
         """Delete a menu item/command path after user confirmation."""
         if nuke.ask(f"Are you sure you want to delete\n\n{cmd_path}"):
-            with Timed(f"deleting {cmd_path} from menus"):
-                delete_from_menu(self.main_menu, cmd_path)
-                if self._modify_menu:
-                    delete_from_menu(self._modify_menu, cmd_path)
-            with Timed(f"deleting {cmd_path} from disk"):
-                nk_path = self._menu_nk_roster.pop(cmd_path, None)
-                if not isinstance(nk_path, Path):
-                    LOG.warning(f"No .nk path found to delete for {cmd_path!r}")
-                elif not nk_path.is_file():
-                    LOG.info(f"{cmd_path!r} already deleted: {nk_path}")
-                else:
-                    clean_file(nk_path)
+            nk_path = self._menu_nk_roster.get(cmd_path)
+            if not isinstance(nk_path, Path):
+                LOG.warning("No .nk path found to delete for %r", cmd_path)
+            elif not nk_path.is_file():
+                LOG.info("%r already deleted: %s", cmd_path, nk_path)
+            else:
+                try:
+                    with Timed(f"deleting {cmd_path} from disk"):
+                        clean_file(nk_path, stop_at=self._toolsets_root)
+                except OSError as error:
+                    LOG.exception("Could not delete toolset %s", nk_path)
+                    nuke.message(f"Could not delete toolset {nk_path}: {error}")
+                finally:
+                    self.refresh()
+                return
+            self.refresh()
 
     @Timed("refreshing shared toolsets menu", level=logging.INFO)
     def refresh(self) -> None:
@@ -169,8 +216,10 @@ class SharedToolsetGui:
         self._modify_menu = None
         self.main_menu.clearMenu()
 
-        self._disk_path.clean_temp_nk_files()
-        self._menu_nk_roster = self._disk_path.discover_paths_for_menus()
+        exclude_paths = self._nuke_excluded_paths()
+        self._menu_nk_roster = self._disk_path.discover_paths_for_menus(
+            exclude_paths=exclude_paths
+        )
 
         self.main_menu.addCommand(
             "Create",
@@ -208,23 +257,70 @@ class SharedToolsetGui:
         return menu
 
     def _create_callback(self) -> None:
-        panel = CreatePanel(self._menu_nk_roster)
-        if panel.showModalDialog():
-            self.create(panel.new_path)
+        if not nuke.nodesSelected():
+            nuke.message("No nodes are selected")
+        elif (panel := CreatePanel(self._menu_nk_roster)).showModalDialog():
+            try:
+                self.create(panel.new_path)
+            except (OSError, ValueError) as error:
+                self._show_callback_error("create", error)
 
     def _rename_callback(self, old_cmd_path: str) -> None:
         panel = RenamePanel(old_cmd_path, self._menu_nk_roster)
         if panel.showModalDialog():
-            self.rename(old_cmd_path, panel.new_path)
+            try:
+                self.rename(old_cmd_path, panel.new_path)
+            except (OSError, ValueError) as error:
+                self._show_callback_error("rename", error)
 
     def _overwrite_approved_nk_path(self, cmd_path: str) -> Path | None:
         nk_path = self._toolsets_root / f"{cmd_path}.nk"
-        proceed = True
-        if not nk_path.exists():
-            LOG.debug(f"{nk_path} doesn't currently exist")
-        elif proceed := nuke.ask(f"Overwrite existing\n\n{nk_path}"):
-            nk_path.unlink()
-            LOG.info(f"Chosen to OVERWRITE {nk_path}")
-        else:
-            LOG.debug(f"Refused to overwrite {nk_path}")
-        return nk_path if proceed else None
+        if nk_path.exists() and not nuke.ask(f"Overwrite existing\n\n{nk_path}"):
+            LOG.debug("Refused to overwrite %s", nk_path)
+            return None
+        if nk_path.exists():
+            LOG.info("Chosen to OVERWRITE %s", nk_path)
+        return nk_path
+
+    def _validate_cmd_path(self, cmd_path: str, ignore: str | None = None) -> str:
+        normalized = validate_cmd_path(cmd_path)
+        target = (self._toolsets_root / f"{normalized}.nk").resolve()
+        try:
+            target.relative_to(self._toolsets_root.resolve())
+        except ValueError as error:
+            msg = "Toolset path must remain inside the toolsets folder"
+            raise ValueError(msg) from error
+
+        for existing in self._menu_nk_roster:
+            if existing == normalized:
+                continue
+            if existing == ignore and existing.startswith(normalized + "/"):
+                continue
+            if existing.startswith(normalized + "/") or normalized.startswith(
+                existing + "/"
+            ):
+                msg = (
+                    f"Menu path {normalized!r} conflicts with existing toolset "
+                    f"{existing!r}"
+                )
+                raise ValueError(msg)
+        return normalized
+
+    def _remove_empty_parents(self, folder: Path) -> None:
+        for parent in (folder, *folder.parents):
+            if parent == self._toolsets_root:
+                break
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+
+    @staticmethod
+    def _nuke_excluded_paths() -> Iterable[str | Path]:
+        get_excluded = getattr(nuke, "getToolsetExcludePaths", None)
+        return get_excluded() if callable(get_excluded) else ()
+
+    @staticmethod
+    def _show_callback_error(action: str, error: OSError | ValueError) -> None:
+        LOG.exception("Could not %s toolset", action)
+        nuke.message(f"Could not {action} toolset: {error}")
