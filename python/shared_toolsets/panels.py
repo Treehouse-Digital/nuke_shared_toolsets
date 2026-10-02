@@ -94,9 +94,9 @@ class BasePanel(nukescripts.PythonPanel):
 
     def knobChangedCallback(self, knob: nuke.Knob) -> None:  # noqa: N802  # Inherited method naming
         """Extend to update the preset path when the parent folder choice changes."""
-        if knob is self["parentMenu"]:
+        if knob.name() == "parentMenu":
             self["newPath"].setValue(self._new_path_for_current_folder())
-        elif knob is self["newPath"]:
+        elif knob.name() == "newPath":
             current = self["newPath"].value()
             sanitized = sanitize_new_path(current)
             if current != sanitized:
