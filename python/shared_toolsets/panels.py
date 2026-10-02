@@ -62,7 +62,7 @@ class BasePanel(nukescripts.PythonPanel):
     """Base panel class for shared toolsets create/rename panels."""
 
     ROOT: str = "<root>"
-    """Value of representing the SharedToolSets root menu."""
+    """Menu item for the SharedToolSets root menu."""
 
     KNOBS: MappingProxyType[str, tuple[type[nuke.Knob], tuple]] = MappingProxyType(
         {
@@ -124,7 +124,7 @@ class BasePanel(nukescripts.PythonPanel):
         for knob_name, (knob_class, args) in self.KNOBS.items():
             self.addKnob(knob_class(knob_name, *args))
 
-        # Ensure showModelDialog ok/cancel uses our custom ok/cancel buttons
+        # Ensure showModalDialog uses the panel's custom buttons.
         self.okButton = self["ok"]
         self.cancelButton = self["cancel"]
 
@@ -158,7 +158,7 @@ class RenamePanel(BasePanel):
     def __init__(
         self,
         old_path: str,
-        roster: dict[str, Path],
+        roster: Iterable[str],
         title: str = "Rename ToolSet",
     ) -> None:
         """Extend to store the path to rename before initializing the base panel."""
@@ -174,7 +174,7 @@ class RenamePanel(BasePanel):
 class CreatePanel(BasePanel):
     """Panel for creating a new toolset."""
 
-    def __init__(self, roster: dict[str, Path], title: str = "Create ToolSet") -> None:
+    def __init__(self, roster: Iterable[str], title: str = "Create ToolSet") -> None:
         """Extend to initialise with "Create ToolSet" as the default title."""
         super().__init__(roster, title=title)
 

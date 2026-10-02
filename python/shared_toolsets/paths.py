@@ -8,7 +8,7 @@ import platform
 import re
 from collections import OrderedDict
 from logging import INFO
-from pathlib import Path, PosixPath, WindowsPath
+from pathlib import Path, PosixPath, PurePath, WindowsPath
 from tempfile import NamedTemporaryFile
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from .logger import LOG, Timed
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable, Generator, Mapping
 
 __all__ = ("DiskPath", "clean_file", "nice_mb")
 
@@ -90,8 +90,8 @@ class DiskPath:
         self._localize_re = self._calculate_localize_re()
 
     def _iter_resolved_prefixes(
-        self, system_prefixes: str | Path
-    ) -> Generator[tuple[str, Path], None, None]:
+        self, system_prefixes: Mapping[str, str | Path]
+    ) -> Generator[tuple[str, PurePath], None, None]:
         blank_path = Path()
         for system, prefix in system_prefixes.items():
             if system == SYSTEM:
@@ -112,7 +112,7 @@ class DiskPath:
     def _calculate_toolsets_path(self) -> Path:
         return (self._system_prefix / self._toolsets_sub_path).resolve(strict=True)
 
-    def _calculate_localize_re(self) -> str:
+    def _calculate_localize_re(self) -> re.Pattern[str]:
         localize_re = "|".join(
             re.escape(prefix.as_posix())
             for system_name, prefix in self._system_prefixes.items()
@@ -186,7 +186,7 @@ class DiskPath:
     def temp_localized(
         self, nk_path: Path, percent_callback: Callable[[float], None] | None = None
     ) -> Generator[Path, None, None]:
-        """Create a temporary a copy of the .nk file with paths localized.
+        """Create a temporary copy of the .nk file with paths localized.
 
         This is done line by line in case the .nk file is large i.e. gigabytes in size
         because some people forgot to cleanup their roto shapes.

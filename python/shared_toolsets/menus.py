@@ -17,7 +17,7 @@ __all__ = ("SharedToolsetGui", "delete_from_menu")
 
 
 def delete_from_menu(root_menu: nuke.Menu, sub_path: str) -> None:
-    """Remove a item from the given menu based on the sub path i.e. "Menu/SubMenu/Item".
+    """Remove an item from the given menu by its path, e.g. "Menu/SubMenu/Item".
 
     Nuke's documentation mentioned that `.nuke.Menu.removeItem` should be able to do
     this natively, but alas it doesn't (as recently as 14.1v8).
@@ -55,7 +55,7 @@ class SharedToolsetGui:
         more than 1 prefixes being handled in the disk path.
         """
         self._disk_path = disk_path
-        self._modify_menu = None
+        self._modify_menu: nuke.Menu | None = None
         self._menu_nk_roster: dict[str, Path] = {}
         if localize is None:
             localize = len(disk_path.prefixes) > 1
@@ -68,7 +68,7 @@ class SharedToolsetGui:
             raise TypeError(msg)
         self._parent = parent
         self._main_menu = self.parent.addMenu(
-            "FastSharedToolsets", icon="SharedToolSets.png"
+            "SharedToolsets", icon="SharedToolSets.png"
         )
         self._toolsets_root = disk_path.toolsets
         self.refresh()
