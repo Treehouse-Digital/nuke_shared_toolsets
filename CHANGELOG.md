@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.7-th.2.0.0] - 2026-10-01
 
+### Removed
+
+- Old `add_me_to_*.py` scripts in-favor of new installation instructions in `README.md`
+- Legacy public APIs `setSharedToolSetsPath`, `addFileFilter`, `createToolsetsMenu`, `refreshToolsetsMenu`, `addToolsetsPanel`, and `toolsetLoader`, along with the sample `SharedToolSets/SharedToolSet.nk`.
+
 ### Changed
 
 - Now a Python sub-package under `python` subfolder instead of single file under `scripts` subfolder
